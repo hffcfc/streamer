@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list \
     && apt-get update && apt-get install -y --no-install-recommends \
         python3 \
+        python3-pip \
+        python3-venv \
         ffmpeg \
         git \
         tini \
@@ -31,12 +33,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
-# Install yt-dlp (Standalone Binary)
+# Install yt-dlp (Via Python Virtual Environment)
 # =============================================================================
-# Downloads the official compiled binary directly. This completely bypasses
-# python3-pip restrictions, PEP 668 errors, and exit code 2 build crashes.
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
-    && chmod +x /usr/local/bin/yt-dlp
+# This is the safest way to install yt-dlp in Docker. It avoids Debian's 
+# PEP 668 restrictions and avoids GitHub API rate limits by using PyPI.
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --no-cache-dir -U yt-dlp
 
 # Sanity check: verify all required binaries are available on PATH
 RUN yt-dlp --version && \
