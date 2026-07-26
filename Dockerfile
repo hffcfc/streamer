@@ -1,21 +1,6 @@
 # =============================================================================
 # Dockerfile — YouTube Frontend (Next.js 16 + Bun + yt-dlp + FFmpeg)
 # =============================================================================
-# This Dockerfile does ONE thing: installs ALL dependencies and libraries.
-# It does NOT contain or copy any application source code.
-#
-# After the build, run.sh takes over as the container's entrypoint.
-# run.sh creates ALL source code files, installs npm deps, builds Next.js,
-# and starts all services.
-#
-# The ONLY two files you need:
-#   1. Dockerfile  (this file — installs everything)
-#   2. run.sh      (creates source code + starts server)
-#
-# Build:  docker build -t yt-frontend .
-# Run:    docker run -d -p 80:80 -v yt-data:/app/data -v yt-db:/app/db yt-frontend
-# =============================================================================
-
 FROM oven/bun:1.1-debian
 
 # Avoid interactive prompts during apt installs
@@ -37,8 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list \
     && apt-get update && apt-get install -y --no-install-recommends \
         python3 \
-        python3-pip \
-        python3-venv \
         ffmpeg \
         git \
         tini \
@@ -48,9 +31,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
-# Install yt-dlp via pip
+# Install yt-dlp (Standalone Binary)
 # =============================================================================
-RUN pip3 install --no-cache-dir --break-system-packages -U yt-dlp
+# Downloads the official compiled binary directly. This completely bypasses
+# python3-pip restrictions, PEP 668 errors, and exit code 2 build crashes.
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod +x /usr/local/bin/yt-dlp
 
 # Sanity check: verify all required binaries are available on PATH
 RUN yt-dlp --version && \
@@ -65,7 +51,7 @@ RUN yt-dlp --version && \
 WORKDIR /app
 
 # =============================================================================
-# Copy run.sh — the ONLY application file needed
+# Copy run.sh — the application bootstrap script
 # =============================================================================
 COPY run.sh ./run.sh
 RUN chmod +x ./run.sh
