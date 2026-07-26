@@ -39,20 +39,26 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   caddy          -> reverse proxy (XTransformPort gateway on port 80)
 #   procps         -> process inspection (pgrep, pkill, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 \
-        python3-pip \
-        python3-venv \
-        ffmpeg \
         curl \
         wget \
         ca-certificates \
         gnupg \
+        debian-keyring \
+        debian-archive-keyring \
+        apt-transport-https \
+    && curl -1sLf 'https://cloudsmith.io' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+    && curl -1sLf 'https://cloudsmith.io' | tee /etc/apt/sources.list.d/caddy-stable.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+        ffmpeg \
         git \
         tini \
         netcat-openbsd \
         caddy \
         procps \
-        && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
 # Install yt-dlp via pip
@@ -116,7 +122,7 @@ EXPOSE 80 3000 3001
 # Hits the Next.js /api/settings endpoint. Returns 200 when the app is up.
 # start_period is 180s because the first run needs to install deps + build.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
-    CMD curl -fsS "http://127.0.0.1:3000/api/settings" || exit 1
+    CMD curl -fsS "http://127.0.0" || exit 1
 
 # =============================================================================
 # Entrypoint — tini (PID 1) runs run.sh
