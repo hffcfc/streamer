@@ -25,19 +25,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # =============================================================================
 # Install ALL system dependencies
 # =============================================================================
-# These are installed ONCE during the Docker build and cached in the image.
-# run.sh does NOT install anything — it uses these pre-installed binaries.
-#
-#   python3 + pip  -> yt-dlp runtime (yt-dlp is a Python application)
-#   ffmpeg         -> video merge / audio extraction / format conversion
-#   curl, wget     -> networking + healthchecks
-#   ca-certificates-> TLS certificate verification
-#   gnupg          -> GPG key verification (for apt repos)
-#   git            -> some npm postinstall scripts require it
-#   tini           -> proper PID 1 signal handling (SIGTERM/SIGINT)
-#   netcat-openbsd -> port readiness checks
-#   caddy          -> reverse proxy (XTransformPort gateway on port 80)
-#   procps         -> process inspection (pgrep, pkill, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         wget \
@@ -46,8 +33,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         debian-keyring \
         debian-archive-keyring \
         apt-transport-https \
-    && curl -1sLf 'https://cloudsmith.io' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
-    && curl -1sLf 'https://cloudsmith.io' | tee /etc/apt/sources.list.d/caddy-stable.list \
+    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list \
     && apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
@@ -63,8 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # =============================================================================
 # Install yt-dlp via pip
 # =============================================================================
-# yt-dlp is a Python application. We install the latest version because YouTube
-# frequently breaks older versions.
 RUN pip3 install --no-cache-dir --break-system-packages -U yt-dlp
 
 # Sanity check: verify all required binaries are available on PATH
@@ -82,51 +67,26 @@ WORKDIR /app
 # =============================================================================
 # Copy run.sh — the ONLY application file needed
 # =============================================================================
-# run.sh is the container's startup script. It:
-#   - Writes out ALL 117 application source code files via heredocs
-#   - Installs npm dependencies (bun install)
-#   - Generates the Prisma client
-#   - Builds the Next.js production bundle
-#   - Creates runtime directories, JSON data files, cookies placeholder
-#   - Creates the Caddyfile
-#   - Validates the environment
-#   - Initializes the SQLite database
-#   - Starts Caddy + progress-service + Next.js
-#   - Monitors all processes
 COPY run.sh ./run.sh
 RUN chmod +x ./run.sh
 
 # =============================================================================
 # Persistent volumes
 # =============================================================================
-# These directories persist across container restarts:
-#   /app/db       -> SQLite database
-#   /app/data     -> JSON files + downloads
-#   /app/cookies  -> cookies.txt (admin can replace)
-#   /app/logs     -> startup.log, error.log, service logs
-#   /app/.next    -> Next.js build output (cached across restarts)
-#   /app/node_modules -> npm dependencies (cached across restarts)
 VOLUME ["/app/db", "/app/data", "/app/cookies", "/app/logs", "/app/.next", "/app/node_modules"]
 
 # =============================================================================
 # Expose ports
 # =============================================================================
-#   80   -> Caddy gateway (MAIN entry point — use this in your browser)
-#   3000 -> Next.js direct (optional, for debugging)
-#   3001 -> socket.io progress-service (optional, for debugging)
 EXPOSE 80 3000 3001
 
 # =============================================================================
 # Healthcheck
 # =============================================================================
-# Hits the Next.js /api/settings endpoint. Returns 200 when the app is up.
-# start_period is 180s because the first run needs to install deps + build.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
-    CMD curl -fsS "http://127.0.0" || exit 1
+    CMD curl -fsS "http://127.0.0.1/api/settings" || exit 1
 
 # =============================================================================
 # Entrypoint — tini (PID 1) runs run.sh
 # =============================================================================
-# tini ensures proper signal handling so SIGTERM/SIGINT propagate cleanly
-# to all child processes (Caddy, progress-service, Next.js).
 ENTRYPOINT ["/usr/bin/tini", "--", "./run.sh"]
