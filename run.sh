@@ -4,9 +4,13 @@ set -Eeuo pipefail
 # =============================================================================
 # run.sh — YouTube Frontend (Self-Contained, LOW-RAM Optimized for 400MB)
 # =============================================================================
-# This SINGLE script does everything. No Dockerfile needed.
+# This script writes all source code, builds Next.js, and serves on :80.
+# System dependencies are installed by:
+#   - Docker:     the Dockerfile (reusable cached image, recommended)
+#   - Bare metal: Section 0 of this script (auto-installs missing deps)
 #
-#   bash run.sh
+#   Docker:     docker build -t streamvault . && docker run -p 80:80 streamvault
+#   Bare metal: bash run.sh
 #
 # TESTED & VERIFIED memory footprint (production mode):
 #   - Next.js (next start): ~180-200 MB  (peak with concurrent load)
@@ -63,6 +67,17 @@ SWAP_SIZE="${SWAP_SIZE:-2G}"     # 2GB swap — enough for next build
 
 # Create app directories early
 mkdir -p "$APP_DIR" "$LOG_DIR" "$TMP_DIR"
+
+# -----------------------------------------------------------------------------
+# Docker detection
+# -----------------------------------------------------------------------------
+# When running inside Docker, skip swap creation, kernel tuning, and system
+# package installation — those require --privileged (or are handled by the
+# Dockerfile at build time). The host's --memory-swap flag handles swap.
+IN_DOCKER=0
+if [ -f /.dockerenv ]; then
+    IN_DOCKER=1
+fi
 
 # -----------------------------------------------------------------------------
 # Colors & logging
@@ -153,36 +168,49 @@ log "========================================"
 log "  Section 0: System Setup + RAM Tuning"
 log "========================================"
 
-# --- Detect package manager ---
-PKG_MGR=""
-if command -v apt-get &>/dev/null; then
-    PKG_MGR="apt"
-elif command -v dnf &>/dev/null; then
-    PKG_MGR="dnf"
-elif command -v yum &>/dev/null; then
-    PKG_MGR="yum"
-elif command -v apk &>/dev/null; then
-    PKG_MGR="apk"
-else
-    log_error "No supported package manager found (apt/dnf/yum/apk)."
-    exit 1
-fi
-log "Detected package manager: $PKG_MGR"
+# Always read memory info (used in environment summary below, in both Docker + bare metal)
+TOTAL_RAM_KB=$(grep -E '^MemTotal:' /proc/meminfo | awk '{print $2}')
+TOTAL_SWAP_KB=$(grep -E '^SwapTotal:' /proc/meminfo | awk '{print $2}')
 
+# has() defined early so it's available in all code paths (Docker + bare metal).
+# Used later for Bun/yt-dlp/ffmpeg fallback checks.
 has() { command -v "$1" &>/dev/null; }
 
-sys_install() {
-    case "$PKG_MGR" in
-        apt)
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y --no-install-recommends "$@"
-            ;;
-        dnf) dnf install -y "$@" ;;
-        yum) yum install -y "$@" ;;
-        apk) apk add --no-cache "$@" ;;
-    esac
-}
+if [ "$IN_DOCKER" -eq 1 ]; then
+    # --- Docker: system deps installed by Dockerfile, swap/kernel by host ---
+    PKG_MGR="docker"
+    log "Running inside Docker — system deps installed by Dockerfile."
+    log "  Swap: managed by host (use: docker run --memory=400m --memory-swap=2g)."
+    log "  Kernel tuning: skipped (managed by host OS)."
+else
+    # --- Bare metal: detect package manager + install missing system deps ---
+    PKG_MGR=""
+    if command -v apt-get &>/dev/null; then
+        PKG_MGR="apt"
+    elif command -v dnf &>/dev/null; then
+        PKG_MGR="dnf"
+    elif command -v yum &>/dev/null; then
+        PKG_MGR="yum"
+    elif command -v apk &>/dev/null; then
+        PKG_MGR="apk"
+    else
+        log_error "No supported package manager found (apt/dnf/yum/apk)."
+        exit 1
+    fi
+    log "Detected package manager: $PKG_MGR"
+
+    sys_install() {
+        case "$PKG_MGR" in
+            apt)
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y --no-install-recommends "$@"
+                ;;
+            dnf) dnf install -y "$@" ;;
+            yum) yum install -y "$@" ;;
+            apk) apk add --no-cache "$@" ;;
+        esac
+    }
 
 # --- Install core system packages ---
 log "Checking and installing system packages..."
@@ -287,6 +315,7 @@ sysctl -q vm.dirty_ratio=5 2>/dev/null || true
 sysctl -q vm.dirty_background_ratio=1 2>/dev/null || true
 echo "vm.dirty_ratio=5" >> /etc/sysctl.d/99-yt-frontend.conf 2>/dev/null || true
 echo "vm.dirty_background_ratio=1" >> /etc/sysctl.d/99-yt-frontend.conf 2>/dev/null || true
+fi  # end Docker check — skip swap/kernel/deps in Docker
 
 # =============================================================================
 # LOW-RAM: Use disk-based TMPDIR (NOT tmpfs which consumes RAM)
